@@ -4,7 +4,7 @@ from multi_echelon_inventory.policies import policy_targets
 
 def nodes():
     return [
-        InventoryNode("Upstream", 100, 20, 4, 4, 1.0, 9.0, service_level=0.95),
+        InventoryNode("Upstream", 100, 10, 3, 4, 1.0, 9.0, service_level=0.95),
         InventoryNode("Downstream", 80, 10, 3, 2, 1.0, 9.0, service_level=0.95),
     ]
 
@@ -23,3 +23,11 @@ def test_echelon_upstream_target_exceeds_downstream_target() -> None:
 def test_critical_ratio_target_is_finite() -> None:
     target = policy_targets(nodes(), PolicyType.CRITICAL_RATIO)["Upstream"]
     assert target > 0
+
+
+def test_echelon_policy_does_not_double_count_serial_demand() -> None:
+    targets = policy_targets(nodes(), PolicyType.ECHELON_BASE_STOCK)
+    downstream = targets["Downstream"]
+    upstream = targets["Upstream"]
+    assert upstream > downstream
+    assert upstream < 3 * downstream
