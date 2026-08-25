@@ -6,7 +6,13 @@ from statistics import NormalDist
 
 @dataclass(frozen=True)
 class InventoryNode:
-    """Inventory parameters for one echelon in a serial supply chain."""
+    """Inventory parameters for one echelon in a serial supply chain.
+
+    Nodes are ordered from the most upstream echelon to the customer-facing
+    echelon. ``lead_time`` is the inbound transportation/replenishment lead time
+    for this node. ``shipment_capacity`` limits how many units the node can ship
+    to its immediate downstream node per simulation period.
+    """
 
     name: str
     initial_on_hand: float
@@ -17,6 +23,7 @@ class InventoryNode:
     shortage_cost: float
     ordering_cost: float = 0.0
     service_level: float = 0.95
+    shipment_capacity: float | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -37,6 +44,8 @@ class InventoryNode:
             raise ValueError("ordering_cost must be non-negative")
         if not 0 < self.service_level < 1:
             raise ValueError("service_level must be strictly between 0 and 1")
+        if self.shipment_capacity is not None and self.shipment_capacity <= 0:
+            raise ValueError("shipment_capacity must be greater than zero when set")
 
     @property
     def service_z(self) -> float:
