@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multi-echelon-inventory-optimization"
-version = "0.3.0"
-description = "Reference implementation for serial multi-echelon inventory planning and stochastic simulation."
+version = "0.4.0"
+description = "Reference implementation for serial multi-echelon inventory planning, simulation optimization, and Monte Carlo analysis."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
