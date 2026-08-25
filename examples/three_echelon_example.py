@@ -3,14 +3,11 @@ from multi_echelon_inventory import (
     MultiEchelonSystem,
     PolicyType,
     SimulationConfig,
+    compare_policies,
 )
 
 
 def main() -> None:
-    # Nodes are ordered from upstream to downstream. In a serial chain, the
-    # customer-facing demand process is represented by the final node. The same
-    # steady-state demand assumptions are repeated upstream for installation-level
-    # policy calculations.
     nodes = [
         InventoryNode(
             name="Supplier",
@@ -18,11 +15,14 @@ def main() -> None:
             demand_mean=20,
             demand_std=6,
             lead_time=10,
+            lead_time_std=2.0,
             holding_cost=0.10,
             shortage_cost=100,
             ordering_cost=25,
             service_level=0.95,
             shipment_capacity=80,
+            production_capacity=70,
+            order_capacity=100,
         ),
         InventoryNode(
             name="Manufacturer",
@@ -30,11 +30,14 @@ def main() -> None:
             demand_mean=20,
             demand_std=6,
             lead_time=5,
+            lead_time_std=1.0,
             holding_cost=0.20,
             shortage_cost=200,
             ordering_cost=20,
             service_level=0.95,
             shipment_capacity=60,
+            production_capacity=55,
+            order_capacity=80,
         ),
         InventoryNode(
             name="Distributor",
@@ -42,10 +45,13 @@ def main() -> None:
             demand_mean=20,
             demand_std=6,
             lead_time=3,
+            lead_time_std=0.75,
             holding_cost=0.15,
             shortage_cost=150,
             ordering_cost=15,
             service_level=0.95,
+            shipment_capacity=50,
+            order_capacity=60,
         ),
     ]
 
@@ -62,8 +68,23 @@ def main() -> None:
         policy=PolicyType.ECHELON_BASE_STOCK,
     )
 
-    print("\nSimulation summary:")
+    print("\nSingle-run simulation summary:")
     print(result.summary.to_string(index=False))
+
+    comparison = compare_policies(
+        system,
+        runs=100,
+        periods=365,
+        base_seed=42,
+        policies=[
+            PolicyType.BASE_STOCK,
+            PolicyType.CRITICAL_RATIO,
+            PolicyType.ECHELON_BASE_STOCK,
+        ],
+    )
+
+    print("\nMonte Carlo policy comparison:")
+    print(comparison.policy_summary.to_string(index=False))
 
 
 if __name__ == "__main__":
