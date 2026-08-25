@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from math import sqrt
 from statistics import NormalDist
 from typing import Sequence
 
@@ -11,6 +12,8 @@ class PolicyType(str, Enum):
     BASE_STOCK = "base_stock"
     CRITICAL_RATIO = "critical_ratio"
     ECHELON_BASE_STOCK = "echelon_base_stock"
+    S_S = "s_S"
+    R_Q = "R_Q"
 
 
 def base_stock_target(node: InventoryNode) -> float:
@@ -25,6 +28,37 @@ def critical_ratio_target(node: InventoryNode) -> float:
     mean = node.lead_time_demand_mean()
     std = node.lead_time_demand_std()
     return max(0.0, mean + z * std)
+
+
+def economic_order_quantity(node: InventoryNode) -> float:
+    """Return a period-consistent EOQ-style lot size.
+
+    ``ordering_cost`` is interpreted as a fixed cost per replenishment order and
+    ``holding_cost`` as a per-unit, per-period cost. If the fixed ordering cost or
+    mean demand is zero, a one-period mean-demand lot is used as a conservative
+    fallback so fixed-quantity policies remain operational.
+    """
+    if node.demand_mean <= 0:
+        return 0.0
+    if node.ordering_cost <= 0:
+        return node.demand_mean
+    return sqrt(2.0 * node.ordering_cost * node.demand_mean / node.holding_cost)
+
+
+def s_s_parameters(node: InventoryNode) -> tuple[float, float]:
+    """Return heuristic ``(s, S)`` parameters for one installation.
+
+    The reorder threshold ``s`` is the service-level reorder point and ``S`` is
+    set one EOQ-style lot above ``s``. These are transparent reference parameters,
+    not the result of an exact stochastic dynamic-programming solution.
+    """
+    s = node.reorder_point()
+    return s, s + economic_order_quantity(node)
+
+
+def r_q_parameters(node: InventoryNode) -> tuple[float, float]:
+    """Return heuristic ``(R, Q)`` reorder-point/fixed-quantity parameters."""
+    return node.reorder_point(), economic_order_quantity(node)
 
 
 def echelon_base_stock_targets(nodes: Sequence[InventoryNode]) -> dict[str, float]:
@@ -74,4 +108,37 @@ def policy_targets(
         return {node.name: critical_ratio_target(node) for node in nodes}
     if policy is PolicyType.ECHELON_BASE_STOCK:
         return echelon_base_stock_targets(nodes)
+    if policy is PolicyType.S_S:
+        return {node.name: s_s_parameters(node)[1] for node in nodes}
+    if policy is PolicyType.R_Q:
+        return {node.name: r_q_parameters(node)[0] for node in nodes}
+    raise ValueError(f"Unsupported policy: {policy}")
+
+
+def replenishment_quantity(
+    node: InventoryNode,
+    policy: PolicyType,
+    inventory_position: float,
+    target: float,
+) -> float:
+    """Return the unconstrained replenishment quantity for a policy decision."""
+    if policy in {
+        PolicyType.BASE_STOCK,
+        PolicyType.CRITICAL_RATIO,
+        PolicyType.ECHELON_BASE_STOCK,
+    }:
+        return max(0.0, target - inventory_position)
+
+    if policy is PolicyType.S_S:
+        reorder_point, order_up_to = s_s_parameters(node)
+        if inventory_position <= reorder_point:
+            return max(0.0, order_up_to - inventory_position)
+        return 0.0
+
+    if policy is PolicyType.R_Q:
+        reorder_point, quantity = r_q_parameters(node)
+        if inventory_position <= reorder_point:
+            return max(0.0, quantity)
+        return 0.0
+
     raise ValueError(f"Unsupported policy: {policy}")
