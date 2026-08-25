@@ -31,3 +31,38 @@ def test_echelon_policy_does_not_double_count_serial_demand() -> None:
     upstream = targets["Upstream"]
     assert upstream > downstream
     assert upstream < 3 * downstream
+
+
+def test_lead_time_uncertainty_increases_echelon_target() -> None:
+    deterministic = nodes()
+    stochastic = [
+        InventoryNode(
+            "Upstream",
+            100,
+            10,
+            3,
+            4,
+            1.0,
+            9.0,
+            service_level=0.95,
+            lead_time_std=1.0,
+        ),
+        InventoryNode(
+            "Downstream",
+            80,
+            10,
+            3,
+            2,
+            1.0,
+            9.0,
+            service_level=0.95,
+            lead_time_std=0.5,
+        ),
+    ]
+    fixed_target = policy_targets(
+        deterministic, PolicyType.ECHELON_BASE_STOCK
+    )["Upstream"]
+    stochastic_target = policy_targets(
+        stochastic, PolicyType.ECHELON_BASE_STOCK
+    )["Upstream"]
+    assert stochastic_target > fixed_target
