@@ -31,3 +31,8 @@ def test_invalid_holding_cost_is_rejected() -> None:
 def test_invalid_service_level_is_rejected() -> None:
     with pytest.raises(ValueError):
         make_node(service_level=1.0)
+
+
+def test_invalid_shipment_capacity_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        make_node(shipment_capacity=0)
