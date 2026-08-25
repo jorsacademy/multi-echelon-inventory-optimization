@@ -9,7 +9,7 @@ import pandas as pd
 
 from .metrics import summarize_history
 from .models import InventoryNode, SimulationConfig
-from .policies import PolicyType, policy_targets
+from .policies import PolicyType, policy_targets, replenishment_quantity
 
 
 @dataclass(frozen=True)
@@ -58,12 +58,22 @@ class MultiEchelonSystem:
         return float(min(shipment, production))
 
     @staticmethod
-    def _order_quantity(node: InventoryNode, target_gap: float) -> float:
-        """Apply a node-level replenishment order capacity to a target gap."""
-        desired = max(0.0, target_gap)
+    def _apply_order_capacity(node: InventoryNode, desired: float) -> float:
+        """Apply a node-level replenishment order capacity to a desired order."""
+        desired = max(0.0, desired)
         if node.order_capacity is None:
             return desired
         return min(desired, float(node.order_capacity))
+
+    def _policy_order_quantity(
+        self,
+        node: InventoryNode,
+        policy: PolicyType,
+        inventory_position: float,
+        target: float,
+    ) -> float:
+        desired = replenishment_quantity(node, policy, inventory_position, target)
+        return self._apply_order_capacity(node, desired)
 
     def simulate(
         self,
@@ -80,6 +90,11 @@ class MultiEchelonSystem:
         optional shipment capacity, and optional production capacity. Orders are
         independently capped by ``order_capacity``. Each inbound movement samples
         a non-negative integer lead time when ``lead_time_std`` is positive.
+
+        ``BASE_STOCK``, ``CRITICAL_RATIO``, and ``ECHELON_BASE_STOCK`` replenish
+        toward their targets each period. ``S_S`` uses an installation-level
+        reorder threshold and order-up-to level. ``R_Q`` uses a reorder point and
+        fixed EOQ-style replenishment quantity.
         """
         n = len(self.nodes)
         targets = self.recommended_stock_levels(policy)
@@ -104,7 +119,6 @@ class MultiEchelonSystem:
             scheduled_lead_time_qty = [0.0] * n
             capacity_remaining = [self._outbound_capacity(node) for node in self.nodes]
 
-            # Receive all shipments that complete their inbound lead time.
             for i in range(n):
                 due_now = sum(qty for due, qty in inbound_pipeline[i] if due == period)
                 inbound_pipeline[i] = [
@@ -113,7 +127,6 @@ class MultiEchelonSystem:
                 arrivals[i] = due_now
                 on_hand[i] += due_now
 
-            # Clear previously backordered internal demand before new orders.
             for i in range(n - 1):
                 quantity = min(on_hand[i], backorders[i], capacity_remaining[i])
                 if quantity <= 0:
@@ -133,8 +146,6 @@ class MultiEchelonSystem:
                 else:
                     inbound_pipeline[receiver].append((period + lead_time, quantity))
 
-            # Clear previously backordered external customer demand, subject to
-            # the customer-facing node's outbound fulfillment capacity.
             customer = n - 1
             backlog_fill = min(
                 on_hand[customer], backorders[customer], capacity_remaining[customer]
@@ -144,7 +155,6 @@ class MultiEchelonSystem:
             capacity_remaining[customer] -= backlog_fill
             shipments[customer] += backlog_fill
 
-            # Generate new external demand only at the customer-facing echelon.
             customer_node = self.nodes[customer]
             customer_demand = float(
                 demand_rng.normal(customer_node.demand_mean, customer_node.demand_std)
@@ -163,9 +173,6 @@ class MultiEchelonSystem:
             shipments[customer] += customer_fill
             immediate_fill[customer] = min(customer_demand, customer_fill)
 
-            # Replenishment decisions propagate from downstream to upstream.
-            # An unshipped upstream backlog is part of the downstream node's open
-            # replenishment order and therefore belongs in inventory position.
             for i in range(n - 1, 0, -1):
                 on_order = sum(qty for _, qty in inbound_pipeline[i])
                 open_upstream_order = backorders[i - 1]
@@ -173,8 +180,8 @@ class MultiEchelonSystem:
                     on_hand[i] + on_order + open_upstream_order - backorders[i]
                 )
                 target = float(targets[self.nodes[i].name])
-                qty = self._order_quantity(
-                    self.nodes[i], target - inventory_position
+                qty = self._policy_order_quantity(
+                    self.nodes[i], policy, inventory_position, target
                 )
                 order_quantity[i] = qty
 
@@ -209,12 +216,11 @@ class MultiEchelonSystem:
                     qty, max(0.0, shipped_now - old_upstream_backlog)
                 )
 
-            # The most-upstream node orders from an unconstrained external source.
             source_on_order = sum(qty for _, qty in inbound_pipeline[0])
             source_inventory_position = on_hand[0] + source_on_order - backorders[0]
             source_target = float(targets[self.nodes[0].name])
-            source_order = self._order_quantity(
-                self.nodes[0], source_target - source_inventory_position
+            source_order = self._policy_order_quantity(
+                self.nodes[0], policy, source_inventory_position, source_target
             )
             order_quantity[0] = source_order
 
@@ -226,11 +232,8 @@ class MultiEchelonSystem:
                     on_hand[0] += source_order
                     arrivals[0] += source_order
                 else:
-                    inbound_pipeline[0].append(
-                        (period + lead_time, source_order)
-                    )
+                    inbound_pipeline[0].append((period + lead_time, source_order))
 
-            # Record state after all period events and ordering decisions.
             for i, node in enumerate(self.nodes):
                 on_order = sum(qty for _, qty in inbound_pipeline[i])
                 open_upstream_order = backorders[i - 1] if i > 0 else 0.0
