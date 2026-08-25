@@ -1,77 +1,54 @@
 # Multi-Echelon Inventory Optimization
 
-A compact Python reference implementation for serial multi-echelon inventory planning, capacity-constrained material flow, and discrete-time stochastic simulation.
+A Python reference implementation for serial multi-echelon inventory planning, capacity-constrained material flow, stochastic simulation, simulation optimization, and Monte Carlo analysis.
 
-This repository is intended for educational, research, and non-commercial use. It is not a production ERP, MRP, or supply-chain optimization engine.
+This repository is intended for educational, research, and non-commercial use. It is not a production ERP, MRP, or commercial supply-chain optimization engine.
 
-## What this project does
+## Features
 
-The package models a serial supply chain whose nodes are ordered from the most upstream echelon to the customer-facing echelon. It includes:
+The package includes:
 
-- reorder-point and base-stock calculations,
-- demand and lead-time uncertainty,
-- cycle-service-level-based safety stock,
-- a newsvendor-style critical-ratio policy,
-- an echelon-aware base-stock heuristic,
-- stochastic external customer demand,
+- serial upstream-to-downstream material flow,
+- stochastic customer demand,
 - stochastic non-negative integer lead times,
-- physical shipment coupling between adjacent echelons,
-- inventory-position-based replenishment ordering,
-- open upstream replenishment orders,
-- per-period replenishment order capacity,
-- per-period production/fulfillment capacity,
-- per-period shipment/transport capacity,
-- replenishment pipelines,
+- lead-time-demand uncertainty in safety-stock calculations,
+- replenishment pipelines and open upstream orders,
 - backorders,
-- holding, shortage, and ordering costs,
-- fill-rate and cycle-service-level reporting,
-- Monte Carlo policy comparison,
-- common random-number seeds across policy replications,
-- deterministic random seeds for reproducible experiments,
-- automated tests through GitHub Actions.
+- per-period order, production, and shipment capacities,
+- holding, shortage, and fixed ordering costs,
+- base-stock policy,
+- critical-ratio policy,
+- echelon base-stock heuristic,
+- heuristic `(s, S)` policy,
+- heuristic `(R, Q)` reorder-point/fixed-quantity policy,
+- Monte Carlo policy comparison using common random numbers,
+- confidence intervals for Monte Carlo mean metrics,
+- service-level-constrained simulation optimization,
+- one-factor-at-a-time Monte Carlo sensitivity analysis,
+- reproducible random seeds,
+- automated tests on Python 3.10 through 3.13.
 
-## Important modeling note
+## Modeling scope
 
-The original prototype used a square-root expression based on mean demand, holding cost, and stockout cost and labeled the result as echelon safety stock. That expression is not a standard multi-echelon safety-stock optimization formula. It also generated stock levels directly from a normal distribution instead of simulating material flows.
-
-The current implementation replaces those assumptions with explicit inventory dynamics. Replenishment orders propagate upstream, physical shipments consume upstream on-hand inventory, shipments and production can be capacity constrained, and goods arrive downstream through deterministic or stochastic lead-time pipelines.
-
-The included echelon base-stock policy is deliberately transparent. It propagates the customer-facing demand process upstream and increases cumulative replenishment exposure for higher echelons. It is a heuristic, not an exact Clark-Scarf dynamic-programming solution.
-
-## Project structure
+Nodes are supplied in upstream-to-downstream order:
 
 ```text
-multi-echelon-inventory-optimization/
-├── .github/
-│   └── workflows/
-│       └── tests.yml
-├── LICENSE
-├── README.md
-├── pyproject.toml
-├── requirements.txt
-├── examples/
-│   └── three_echelon_example.py
-├── src/
-│   └── multi_echelon_inventory/
-│       ├── __init__.py
-│       ├── metrics.py
-│       ├── models.py
-│       ├── monte_carlo.py
-│       ├── policies.py
-│       └── simulation.py
-└── tests/
-    ├── test_models.py
-    ├── test_monte_carlo.py
-    ├── test_policies.py
-    └── test_simulation.py
+External Source -> Supplier -> Manufacturer -> Distributor -> Customer
 ```
+
+Only the final node receives exogenous stochastic customer demand. Replenishment orders propagate upstream and physical material propagates downstream. Internal shipments consume upstream on-hand inventory and are constrained by the tighter of production and shipment capacity when those limits are configured.
+
+The first node replenishes from an unconstrained external source. All other nodes receive material only through their immediate upstream node.
+
+The project deliberately distinguishes transparent reference heuristics from exact stochastic optimization. The echelon policy is not an exact Clark-Scarf dynamic-programming solution, and the service-level optimizer is a finite simulation-based grid search rather than a mathematical-programming solver.
 
 ## Installation
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e .[dev]
+pytest
 ```
 
 On Windows PowerShell:
@@ -79,17 +56,11 @@ On Windows PowerShell:
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e .
-```
-
-For development and tests:
-
-```bash
 pip install -e .[dev]
 pytest
 ```
 
-## Example
+## Basic model
 
 ```python
 from multi_echelon_inventory import (
@@ -97,7 +68,6 @@ from multi_echelon_inventory import (
     MultiEchelonSystem,
     PolicyType,
     SimulationConfig,
-    compare_policies,
 )
 
 nodes = [
@@ -148,132 +118,82 @@ nodes = [
 ]
 
 system = MultiEchelonSystem(nodes)
-
 result = system.simulate(
     SimulationConfig(periods=365, seed=42),
     policy=PolicyType.ECHELON_BASE_STOCK,
 )
 print(result.summary)
-
-comparison = compare_policies(
-    system,
-    runs=100,
-    periods=365,
-    base_seed=42,
-)
-print(comparison.policy_summary)
 ```
 
-A complete runnable example is available in `examples/three_echelon_example.py`.
+## Lead-time uncertainty
 
-## Serial material-flow convention
-
-Nodes must be supplied in upstream-to-downstream order:
-
-```text
-External Source -> Supplier -> Manufacturer -> Distributor -> Customer
-```
-
-Only the final node receives exogenous stochastic customer demand. Upstream demand is generated endogenously by replenishment orders from the immediate downstream node.
-
-A downstream replenishment order becomes demand for the immediate upstream node. If the upstream node cannot fill that order because of insufficient stock, shipment capacity, or production capacity, the unfilled quantity remains an upstream backorder. That open upstream order is included in the downstream node's inventory position, preventing repeated ordering of the same outstanding quantity.
-
-The first node orders from an unconstrained external source and receives accepted replenishment orders through its own stochastic inbound lead-time process.
-
-## Stochastic lead times
-
-`lead_time` is the mean inbound lead time in periods. `lead_time_std` controls lead-time uncertainty. When `lead_time_std > 0`, each physical inbound movement samples a lead time from a normal distribution, rounds it to the nearest integer, and truncates it at zero.
-
-For planning calculations, lead-time demand variance uses the standard independent-demand/lead-time approximation:
+For independent demand and lead time, planning calculations use:
 
 ```text
 Var(D during L) = E[L] * Var(D) + E[D]^2 * Var(L)
 ```
 
-For fixed lead times, this reduces to:
-
-```text
-lead-time demand std = demand_std * sqrt(lead_time)
-```
-
-The echelon heuristic adds independent lead-time variances across the cumulative replenishment path.
+When `lead_time_std` is positive, each inbound movement samples a normal lead time, rounds it to the nearest integer, and truncates it at zero.
 
 ## Capacity constraints
 
-Three distinct optional capacity parameters are available on each `InventoryNode`:
+Each node can specify three independent limits:
 
 ```text
 order_capacity       maximum replenishment order placed per period
-production_capacity  maximum physical outbound fulfillment per period
-shipment_capacity    maximum physical outbound transport/dispatch per period
+production_capacity  maximum outbound fulfillment per period
+shipment_capacity    maximum outbound transport/dispatch per period
 ```
 
-Physical outbound flow is constrained by on-hand inventory and by the tighter of `production_capacity` and `shipment_capacity` when both are configured.
+`None` means unconstrained. Physical outbound flow is limited by on-hand inventory and the tighter of production and shipment capacity.
 
-These parameters are intentionally separate: an echelon may be able to request more material than it can produce or dispatch, and a transport bottleneck can be tighter than a production bottleneck.
-
-## Policy calculations
+## Policies
 
 ### Base stock
 
-For mean demand `mu`, demand standard deviation `sigma`, mean lead time `E[L]`, lead-time standard deviation `sigma_L`, and target service level `alpha`:
-
-```text
-lead-time mean demand = mu * E[L]
-lead-time variance    = E[L] * sigma^2 + mu^2 * sigma_L^2
-safety stock          = z(alpha) * sqrt(lead-time variance)
-base-stock target     = lead-time mean demand + safety stock
-```
+The base-stock target uses mean lead-time demand plus service-level safety stock. Orders replenish the inventory position toward the target.
 
 ### Critical ratio
 
-The critical-ratio policy uses:
+The critical ratio is:
 
 ```text
-critical ratio = shortage cost / (shortage cost + holding cost)
+shortage_cost / (shortage_cost + holding_cost)
 ```
 
-The ratio is converted to a standard-normal quantile and applied to lead-time demand. It is not multiplied directly by a reorder point.
+It is converted to a standard-normal quantile and applied to lead-time demand.
 
-### Echelon base-stock heuristic
+### Echelon base stock
 
-In a serial chain, the same material flow propagates upstream. The heuristic therefore uses the customer-facing demand process rather than summing installation demand across echelons. Higher echelons receive greater cumulative lead-time exposure, including cumulative lead-time variance.
+The customer-facing demand process is propagated upstream while cumulative mean lead time and lead-time variance increase for higher echelons. This is a transparent serial-network heuristic rather than an exact globally optimal solution.
 
-This remains a transparent heuristic rather than an exact globally optimal multi-echelon policy.
+### `(s, S)`
 
-## Simulation sequence
+The implementation uses:
 
-For each period, the simulator:
+```text
+s = service-level reorder point
+S = s + EOQ-style lot size
+```
 
-1. receives inbound shipments whose sampled lead times have expired,
-2. attempts to clear existing internal backorders subject to outbound capacity,
-3. attempts to clear existing external customer backorders,
-4. generates new stochastic customer demand,
-5. fulfills current customer demand subject to stock and outbound capacity,
-6. calculates replenishment orders from downstream to upstream,
-7. caps new orders by `order_capacity`,
-8. ships internal material subject to stock, production capacity, and shipment capacity,
-9. samples inbound lead times for dispatched material,
-10. places the most-upstream node's replenishment order with the external source,
-11. records inventory, flow, service, lead-time, and cost metrics.
+When inventory position is at or below `s`, the node orders enough to move toward `S`, subject to `order_capacity`.
+
+### `(R, Q)`
+
+Here `R` is the reorder point and `Q` is a fixed EOQ-style replenishment quantity:
+
+```text
+R = service-level reorder point
+Q = sqrt(2 * ordering_cost * demand_mean / holding_cost)
+```
+
+When inventory position is at or below `R`, the node places `Q`, subject to `order_capacity`. This repository uses `R` to mean reorder point, not review interval.
 
 ## Monte Carlo policy comparison
 
-`compare_policies` repeatedly simulates selected policies and returns a `MonteCarloResult` with three DataFrames:
-
-```text
-run_results      one system-level row per policy and replication
-node_results     node-level KPIs for every policy and replication
-policy_summary   aggregated policy statistics across replications
-```
-
-The policy summary includes mean total cost, total-cost standard deviation, P05/P50/P95 cost quantiles, mean customer fill rate, mean customer cycle service level, mean network on-hand inventory, and mean network backorders.
-
-Each replication shares the same seed across policies. Customer-demand random streams are therefore common across policies, which reduces comparison noise. Lead-time streams use the same seed family but can diverge when different policies create different shipment event paths.
-
-Example:
-
 ```python
+from multi_echelon_inventory import compare_policies
+
 comparison = compare_policies(
     system,
     runs=500,
@@ -283,35 +203,119 @@ comparison = compare_policies(
         PolicyType.BASE_STOCK,
         PolicyType.CRITICAL_RATIO,
         PolicyType.ECHELON_BASE_STOCK,
+        PolicyType.S_S,
+        PolicyType.R_Q,
     ],
+    confidence_level=0.95,
 )
 
 print(comparison.policy_summary)
 ```
 
+Each replication uses the same seed across policies. The summary reports mean cost, cost standard deviation, P05/P50/P95 cost quantiles, customer fill rate, customer cycle service level, network inventory, network backorders, and confidence intervals around key replication means.
+
+The intervals quantify Monte Carlo sampling uncertainty. They do not represent a guarantee that the modeled supply chain matches real operations.
+
+## Service-level-constrained simulation optimization
+
+`optimize_service_level` performs a finite grid search over a common service-level parameter and selected policies. It minimizes simulated mean total cost among candidates satisfying customer-service constraints.
+
+```python
+from multi_echelon_inventory import optimize_service_level
+
+optimization = optimize_service_level(
+    system,
+    service_levels=[0.90, 0.925, 0.95, 0.975, 0.99],
+    runs=200,
+    periods=365,
+    base_seed=123,
+    policies=[
+        PolicyType.BASE_STOCK,
+        PolicyType.ECHELON_BASE_STOCK,
+        PolicyType.S_S,
+        PolicyType.R_Q,
+    ],
+    min_customer_fill_rate=0.97,
+    min_customer_cycle_service_level=0.90,
+)
+
+print(optimization.candidates)
+print(optimization.best_policy)
+print(optimization.best_service_level)
+print(optimization.best_mean_total_cost)
+```
+
+If no candidate satisfies the requested constraints, `optimization.feasible` is `False`. A denser grid and more Monte Carlo replications should be used when candidate costs are close.
+
+## Sensitivity analysis
+
+`sensitivity_analysis` performs one-factor-at-a-time scenario analysis. A parameter can be scaled across all nodes or at one named node.
+
+```python
+from multi_echelon_inventory import sensitivity_analysis
+
+sensitivity = sensitivity_analysis(
+    system,
+    parameter="demand_std",
+    multipliers=[0.75, 1.0, 1.25, 1.5],
+    runs=100,
+    periods=365,
+    base_seed=123,
+)
+
+print(sensitivity.scenarios)
+print(sensitivity.policy_results)
+```
+
+Supported parameters include demand mean and standard deviation, mean and standard deviation of lead time, holding cost, shortage cost, ordering cost, and configured order/production/shipment capacities.
+
 ## Output metrics
 
-Period-level history includes demand, immediate demand fill, arrivals, shipments, replenishment orders, on-hand inventory, on-order inventory, open upstream orders, backorders, inventory position, policy target, sampled/scheduled inbound lead time, and costs.
+Period history includes demand, immediate fill, arrivals, shipments, replenishment orders, on-hand inventory, pipeline inventory, open upstream orders, backorders, inventory position, policy target, scheduled lead time, and costs.
 
-The node-level summary includes average on-hand inventory, average inventory position, average backorders, demand units, immediately filled units, fill rate, cycle service level, stockout periods, holding cost, shortage cost, ordering cost, and total cost.
+Node summaries include average on-hand inventory, average inventory position, average backorders, demand units, immediate fill units, fill rate, cycle service level, stockout periods, holding cost, shortage cost, ordering cost, and total cost.
 
-## Assumptions and limitations
+## Project structure
 
-Current assumptions include discrete periods, normally distributed customer demand, optional truncation of demand at zero, normally distributed lead-time samples truncated at zero, backordering, a serial topology, one immediate upstream supplier per node, and an unconstrained external source for the most-upstream node.
+```text
+multi-echelon-inventory-optimization/
+├── .github/workflows/tests.yml
+├── LICENSE
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── examples/
+│   └── three_echelon_example.py
+├── src/multi_echelon_inventory/
+│   ├── __init__.py
+│   ├── metrics.py
+│   ├── models.py
+│   ├── monte_carlo.py
+│   ├── optimization.py
+│   ├── policies.py
+│   ├── sensitivity.py
+│   └── simulation.py
+└── tests/
+    ├── test_advanced_analysis.py
+    ├── test_models.py
+    ├── test_monte_carlo.py
+    ├── test_policies.py
+    └── test_simulation.py
+```
 
-`production_capacity` is modeled as a per-period outbound fulfillment constraint. The model does not yet represent explicit multi-stage production transformations, yields, bills of material, setup times, batch production, or work-in-process queues.
+## Limitations
 
-Production-grade multi-echelon optimization would normally require additional capabilities such as correlated or non-normal demand, empirical lead-time distributions, minimum order quantities, lot sizing, multiple products, bill-of-material relationships, branching networks, allocation rules among multiple downstream nodes, parameter estimation, service-level constraints, and exact or approximate stochastic optimization algorithms.
+The current model assumes a serial, single-product network, normally distributed customer demand, normal lead-time perturbations truncated at zero, backordering, one immediate upstream source per node, and no explicit production transformation or bill of materials.
+
+It does not yet implement branching networks, multiple products, correlated demand, empirical distributions, minimum order quantities, setup-time queues, production yields, allocation among competing downstream nodes, parameter estimation, exact Clark-Scarf optimization, or general stochastic mathematical programming.
 
 ## Testing
-
-Run the local test suite with:
 
 ```bash
 pytest
 ```
 
-GitHub Actions runs the same test suite automatically on pushes and pull requests to `main` across the configured Python versions.
+GitHub Actions runs the test suite on pushes and pull requests to `main` for Python 3.10, 3.11, 3.12, and 3.13.
 
 ## License
 
