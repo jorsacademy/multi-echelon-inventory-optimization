@@ -12,6 +12,7 @@ def summarize_history(history: pd.DataFrame) -> pd.DataFrame:
         immediate_fill_units = float(frame["Filled Demand"].sum())
         stockout_periods = int((frame["Backorders"] > 0).sum())
         periods = len(frame)
+        lead_times = frame["Scheduled Lead Time"].dropna()
 
         rows.append(
             {
@@ -28,6 +29,12 @@ def summarize_history(history: pd.DataFrame) -> pd.DataFrame:
                 ),
                 "Cycle Service Level": 1.0 - stockout_periods / periods,
                 "Stockout Periods": stockout_periods,
+                "Avg Scheduled Lead Time": (
+                    float(lead_times.mean()) if not lead_times.empty else float("nan")
+                ),
+                "Max Scheduled Lead Time": (
+                    float(lead_times.max()) if not lead_times.empty else float("nan")
+                ),
                 "Holding Cost": float(frame["Holding Cost"].sum()),
                 "Shortage Cost": float(frame["Shortage Cost"].sum()),
                 "Ordering Cost": float(frame["Ordering Cost"].sum()),
