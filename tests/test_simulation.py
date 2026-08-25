@@ -47,3 +47,47 @@ def test_fill_rate_is_bounded() -> None:
     result = make_system().simulate(SimulationConfig(periods=60, seed=7))
     fill_rate = float(result.summary.loc[0, "Fill Rate"])
     assert 0.0 <= fill_rate <= 1.0
+
+
+def test_internal_orders_become_upstream_demand() -> None:
+    system = MultiEchelonSystem(
+        [
+            InventoryNode("Supplier", 100, 5, 0, 1, 1.0, 10.0),
+            InventoryNode("Retailer", 0, 5, 0, 1, 1.0, 10.0),
+        ]
+    )
+    result = system.simulate(
+        SimulationConfig(periods=3, seed=1),
+        PolicyType.BASE_STOCK,
+    )
+    supplier = result.history[result.history["Node"] == "Supplier"]
+    assert supplier["Demand"].sum() > 0
+
+
+def test_shipment_capacity_limits_physical_flow() -> None:
+    system = MultiEchelonSystem(
+        [
+            InventoryNode(
+                "Supplier", 100, 20, 0, 1, 1.0, 10.0, shipment_capacity=3
+            ),
+            InventoryNode("Retailer", 0, 20, 0, 1, 1.0, 10.0),
+        ]
+    )
+    result = system.simulate(
+        SimulationConfig(periods=5, seed=1),
+        PolicyType.BASE_STOCK,
+    )
+    supplier = result.history[result.history["Node"] == "Supplier"]
+    assert (supplier["Shipments"] <= 3.0).all()
+
+
+def test_only_customer_facing_node_receives_external_stochastic_demand() -> None:
+    system = MultiEchelonSystem(
+        [
+            InventoryNode("Supplier", 100, 20, 4, 1, 1.0, 10.0),
+            InventoryNode("Retailer", 100, 20, 4, 1, 1.0, 10.0),
+        ]
+    )
+    result = system.simulate(SimulationConfig(periods=2, seed=7))
+    retailer = result.history[result.history["Node"] == "Retailer"]
+    assert (retailer["Demand"] > 0).all()
