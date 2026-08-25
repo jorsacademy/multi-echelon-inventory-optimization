@@ -23,6 +23,13 @@ def test_reorder_point_exceeds_mean_lead_time_demand() -> None:
     assert node.reorder_point() > node.lead_time_demand_mean()
 
 
+def test_stochastic_lead_time_increases_demand_uncertainty() -> None:
+    deterministic = make_node(lead_time_std=0.0)
+    stochastic = make_node(lead_time_std=2.0)
+    assert stochastic.lead_time_demand_std() > deterministic.lead_time_demand_std()
+    assert stochastic.safety_stock() > deterministic.safety_stock()
+
+
 def test_invalid_holding_cost_is_rejected() -> None:
     with pytest.raises(ValueError):
         make_node(holding_cost=0)
@@ -33,6 +40,15 @@ def test_invalid_service_level_is_rejected() -> None:
         make_node(service_level=1.0)
 
 
-def test_invalid_shipment_capacity_is_rejected() -> None:
+@pytest.mark.parametrize(
+    "field",
+    ["shipment_capacity", "order_capacity", "production_capacity"],
+)
+def test_invalid_capacity_is_rejected(field: str) -> None:
     with pytest.raises(ValueError):
-        make_node(shipment_capacity=0)
+        make_node(**{field: 0})
+
+
+def test_invalid_lead_time_std_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        make_node(lead_time_std=-0.1)
