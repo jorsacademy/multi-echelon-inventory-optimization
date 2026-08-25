@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multi-echelon-inventory-optimization"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reference implementation for serial multi-echelon inventory planning and stochastic simulation."
 readme = "README.md"
 requires-python = ">=3.10"
