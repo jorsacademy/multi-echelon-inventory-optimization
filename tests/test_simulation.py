@@ -160,8 +160,12 @@ def test_open_upstream_orders_are_included_in_inventory_position() -> None:
         PolicyType.BASE_STOCK,
     )
     retailer = result.history[result.history["Node"] == "Retailer"]
-    assert (retailer["Open Upstream Order"] >= 0).all()
-    assert (retailer["Order Quantity"] <= retailer["Target"] + 1e-9).all()
+    orders = retailer["Order Quantity"].reset_index(drop=True)
+    open_orders = retailer["Open Upstream Order"].reset_index(drop=True)
+
+    assert (open_orders >= 0).all()
+    assert open_orders.iloc[0] > 0
+    assert orders.iloc[1] < orders.iloc[0]
 
 
 def test_only_customer_facing_node_receives_external_stochastic_demand() -> None:
