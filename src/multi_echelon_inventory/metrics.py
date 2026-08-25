@@ -9,7 +9,7 @@ def summarize_history(history: pd.DataFrame) -> pd.DataFrame:
 
     for node, frame in history.groupby("Node", sort=False):
         demand_units = float(frame["Demand"].sum())
-        filled_units = float(frame["Filled Demand"].sum())
+        immediate_fill_units = float(frame["Filled Demand"].sum())
         stockout_periods = int((frame["Backorders"] > 0).sum())
         periods = len(frame)
 
@@ -20,8 +20,12 @@ def summarize_history(history: pd.DataFrame) -> pd.DataFrame:
                 "Avg Inventory Position": float(frame["Inventory Position"].mean()),
                 "Avg Backorders": float(frame["Backorders"].mean()),
                 "Demand Units": demand_units,
-                "Filled Units": filled_units,
-                "Fill Rate": 1.0 if demand_units == 0 else filled_units / demand_units,
+                "Filled Units": immediate_fill_units,
+                "Fill Rate": (
+                    1.0
+                    if demand_units == 0
+                    else min(1.0, immediate_fill_units / demand_units)
+                ),
                 "Cycle Service Level": 1.0 - stockout_periods / periods,
                 "Stockout Periods": stockout_periods,
                 "Holding Cost": float(frame["Holding Cost"].sum()),
