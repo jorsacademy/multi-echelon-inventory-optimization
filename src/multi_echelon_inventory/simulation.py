@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import inf
 from typing import Sequence
 
 import numpy as np
@@ -18,7 +19,13 @@ class SimulationResult:
 
 
 class MultiEchelonSystem:
-    """Serial multi-echelon inventory planning and simulation model."""
+    """Serial multi-echelon inventory planning and simulation model.
+
+    Nodes must be supplied from upstream to downstream. The last node faces
+    stochastic external customer demand. Replenishment orders propagate
+    upstream, while physical shipments consume upstream on-hand inventory,
+    respect optional shipment capacities, and travel through lead-time pipelines.
+    """
 
     def __init__(self, nodes: Sequence[InventoryNode]) -> None:
         self.nodes = list(nodes)
@@ -38,74 +45,176 @@ class MultiEchelonSystem:
         config: SimulationConfig = SimulationConfig(),
         policy: PolicyType = PolicyType.ECHELON_BASE_STOCK,
     ) -> SimulationResult:
-        """Simulate each node with stochastic demand and replenishment dynamics.
+        """Run a coupled serial supply-chain simulation.
 
-        Nodes share an echelon-aware planning policy when selected, but physical
-        shipments are not coupled between adjacent nodes. Replenishment supply is
-        unconstrained, and shortages are backordered.
+        The customer-facing node is the final node in ``self.nodes``. Its
+        ``demand_mean`` and ``demand_std`` generate external demand. Every other
+        node sees demand only through replenishment orders placed by its
+        immediate downstream node.
+
+        The first node replenishes from an unconstrained external source after
+        its own lead time. All internal shipments are constrained by upstream
+        on-hand stock and, when configured, ``shipment_capacity``.
         """
+        n = len(self.nodes)
         targets = self.recommended_stock_levels(policy)
-        seed_sequence = np.random.SeedSequence(config.seed)
-        child_seeds = seed_sequence.spawn(len(self.nodes))
+        rng = np.random.default_rng(config.seed)
+
+        on_hand = [float(node.initial_on_hand) for node in self.nodes]
+        backorders = [0.0] * n
+        inbound_pipeline: list[list[tuple[int, float]]] = [[] for _ in self.nodes]
+
         records: list[dict[str, float | int | str]] = []
 
-        for node, child_seed in zip(self.nodes, child_seeds):
-            rng = np.random.default_rng(child_seed)
-            on_hand = float(node.initial_on_hand)
-            backorders = 0.0
-            pipeline: list[tuple[int, float]] = []
-            target = float(targets[node.name])
+        for period in range(1, config.periods + 1):
+            arrivals = [0.0] * n
+            shipments = [0.0] * n
+            demand = [0.0] * n
+            immediate_fill = [0.0] * n
+            order_quantity = [0.0] * n
+            capacity_remaining = [
+                inf if node.shipment_capacity is None else float(node.shipment_capacity)
+                for node in self.nodes
+            ]
 
-            for period in range(1, config.periods + 1):
-                arrivals = sum(qty for due, qty in pipeline if due == period)
-                pipeline = [(due, qty) for due, qty in pipeline if due != period]
-                on_hand += arrivals
+            # Receive all shipments that complete their inbound lead time.
+            for i in range(n):
+                due_now = sum(
+                    qty for due, qty in inbound_pipeline[i] if due == period
+                )
+                inbound_pipeline[i] = [
+                    (due, qty)
+                    for due, qty in inbound_pipeline[i]
+                    if due != period
+                ]
+                arrivals[i] = due_now
+                on_hand[i] += due_now
 
-                if backorders > 0 and on_hand > 0:
-                    backlog_fill = min(on_hand, backorders)
-                    on_hand -= backlog_fill
-                    backorders -= backlog_fill
+            # Clear previously backordered internal demand before new orders.
+            for i in range(n - 1):
+                quantity = min(on_hand[i], backorders[i], capacity_remaining[i])
+                if quantity <= 0:
+                    continue
+                on_hand[i] -= quantity
+                backorders[i] -= quantity
+                capacity_remaining[i] -= quantity
+                shipments[i] += quantity
+                receiver = i + 1
+                due = period + self.nodes[receiver].lead_time
+                if self.nodes[receiver].lead_time == 0:
+                    on_hand[receiver] += quantity
+                    arrivals[receiver] += quantity
+                else:
+                    inbound_pipeline[receiver].append((due, quantity))
 
-                demand = float(rng.normal(node.demand_mean, node.demand_std))
-                if config.truncate_demand_at_zero:
-                    demand = max(0.0, demand)
+            # Clear previously backordered external customer demand.
+            customer = n - 1
+            old_customer_backlog = backorders[customer]
+            backlog_fill = min(on_hand[customer], old_customer_backlog)
+            on_hand[customer] -= backlog_fill
+            backorders[customer] -= backlog_fill
+            shipments[customer] += backlog_fill
 
-                filled_demand = min(on_hand, demand)
-                on_hand -= filled_demand
-                unmet = demand - filled_demand
-                backorders += unmet
+            # Generate new external demand only at the customer-facing echelon.
+            customer_node = self.nodes[customer]
+            customer_demand = float(
+                rng.normal(customer_node.demand_mean, customer_node.demand_std)
+            )
+            if config.truncate_demand_at_zero:
+                customer_demand = max(0.0, customer_demand)
 
-                on_order_before = sum(qty for _, qty in pipeline)
-                inventory_position_before = on_hand + on_order_before - backorders
-                order_quantity = max(0.0, target - inventory_position_before)
+            demand[customer] = customer_demand
+            backlog_before_new = backorders[customer]
+            backorders[customer] += customer_demand
+            customer_fill = min(on_hand[customer], backorders[customer])
+            on_hand[customer] -= customer_fill
+            backorders[customer] -= customer_fill
+            shipments[customer] += customer_fill
+            immediate_fill[customer] = min(
+                customer_demand,
+                max(0.0, customer_fill - backlog_before_new),
+            )
 
-                if order_quantity > 0:
-                    if node.lead_time == 0:
-                        on_hand += order_quantity
+            # Replenishment decisions propagate from downstream to upstream.
+            # A downstream order is demand for its immediate upstream node.
+            for i in range(n - 1, 0, -1):
+                on_order = sum(qty for _, qty in inbound_pipeline[i])
+                inventory_position = on_hand[i] + on_order - backorders[i]
+                target = float(targets[self.nodes[i].name])
+                qty = max(0.0, target - inventory_position)
+                order_quantity[i] = qty
+
+                upstream = i - 1
+                old_upstream_backlog = backorders[upstream]
+                demand[upstream] += qty
+                backorders[upstream] += qty
+
+                shipped_now = min(
+                    on_hand[upstream],
+                    backorders[upstream],
+                    capacity_remaining[upstream],
+                )
+                if shipped_now > 0:
+                    on_hand[upstream] -= shipped_now
+                    backorders[upstream] -= shipped_now
+                    capacity_remaining[upstream] -= shipped_now
+                    shipments[upstream] += shipped_now
+
+                    due = period + self.nodes[i].lead_time
+                    if self.nodes[i].lead_time == 0:
+                        on_hand[i] += shipped_now
+                        arrivals[i] += shipped_now
                     else:
-                        pipeline.append((period + node.lead_time, order_quantity))
+                        inbound_pipeline[i].append((due, shipped_now))
 
-                on_order_after = sum(qty for _, qty in pipeline)
-                inventory_position_after = on_hand + on_order_after - backorders
+                immediate_fill[upstream] += min(
+                    qty,
+                    max(0.0, shipped_now - old_upstream_backlog),
+                )
 
-                holding_cost = on_hand * node.holding_cost
-                shortage_cost = backorders * node.shortage_cost
-                ordering_cost = node.ordering_cost if order_quantity > 0 else 0.0
+            # The most-upstream node orders from an unconstrained external source.
+            source_on_order = sum(qty for _, qty in inbound_pipeline[0])
+            source_inventory_position = (
+                on_hand[0] + source_on_order - backorders[0]
+            )
+            source_target = float(targets[self.nodes[0].name])
+            source_order = max(0.0, source_target - source_inventory_position)
+            order_quantity[0] = source_order
+
+            if source_order > 0:
+                if self.nodes[0].lead_time == 0:
+                    on_hand[0] += source_order
+                    arrivals[0] += source_order
+                else:
+                    inbound_pipeline[0].append(
+                        (period + self.nodes[0].lead_time, source_order)
+                    )
+
+            # Record state after all period events and ordering decisions.
+            for i, node in enumerate(self.nodes):
+                on_order = sum(qty for _, qty in inbound_pipeline[i])
+                inventory_position = on_hand[i] + on_order - backorders[i]
+                holding_cost = on_hand[i] * node.holding_cost
+                shortage_cost = backorders[i] * node.shortage_cost
+                ordering_cost = (
+                    node.ordering_cost if order_quantity[i] > 0 else 0.0
+                )
                 total_cost = holding_cost + shortage_cost + ordering_cost
 
                 records.append(
                     {
                         "Period": period,
                         "Node": node.name,
-                        "Demand": demand,
-                        "Filled Demand": filled_demand,
-                        "Arrivals": arrivals,
-                        "Order Quantity": order_quantity,
-                        "On Hand": on_hand,
-                        "On Order": on_order_after,
-                        "Backorders": backorders,
-                        "Inventory Position": inventory_position_after,
-                        "Target": target,
+                        "Demand": demand[i],
+                        "Filled Demand": immediate_fill[i],
+                        "Arrivals": arrivals[i],
+                        "Shipments": shipments[i],
+                        "Order Quantity": order_quantity[i],
+                        "On Hand": on_hand[i],
+                        "On Order": on_order,
+                        "Backorders": backorders[i],
+                        "Inventory Position": inventory_position,
+                        "Target": float(targets[node.name]),
                         "Holding Cost": holding_cost,
                         "Shortage Cost": shortage_cost,
                         "Ordering Cost": ordering_cost,
