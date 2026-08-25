@@ -7,28 +7,34 @@ from multi_echelon_inventory import (
 
 
 def main() -> None:
+    # Nodes are ordered from upstream to downstream. In a serial chain, the
+    # customer-facing demand process is represented by the final node. The same
+    # steady-state demand assumptions are repeated upstream for installation-level
+    # policy calculations.
     nodes = [
         InventoryNode(
             name="Supplier",
             initial_on_hand=1000,
-            demand_mean=50,
-            demand_std=10,
+            demand_mean=20,
+            demand_std=6,
             lead_time=10,
             holding_cost=0.10,
             shortage_cost=100,
             ordering_cost=25,
             service_level=0.95,
+            shipment_capacity=80,
         ),
         InventoryNode(
             name="Manufacturer",
             initial_on_hand=750,
-            demand_mean=30,
-            demand_std=8,
+            demand_mean=20,
+            demand_std=6,
             lead_time=5,
             holding_cost=0.20,
             shortage_cost=200,
             ordering_cost=20,
             service_level=0.95,
+            shipment_capacity=60,
         ),
         InventoryNode(
             name="Distributor",
