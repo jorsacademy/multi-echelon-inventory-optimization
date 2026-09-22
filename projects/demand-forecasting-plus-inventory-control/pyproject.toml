@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "demand-forecasting-plus-inventory-control"
+version = "0.1.0"
+description = "Hybrid demand forecasting and inventory control benchmark with classical policies and reinforcement learning."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "gymnasium>=0.29,<2",
+  "numpy>=1.24,<3",
+  "pandas>=2.0,<3",
+]
+
+[project.optional-dependencies]
+rl = ["stable-baselines3>=2.3,<3", "torch>=2.1"]
+dev = ["pytest>=8,<10"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
