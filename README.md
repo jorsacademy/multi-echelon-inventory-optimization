@@ -1,4 +1,23 @@
-# Multi-Echelon Inventory Optimization
+# Inventory Optimization and Control
+
+<!-- portfolio-umbrella:start -->
+## Portfolio role
+
+This repository is the primary umbrella repository for this Jors Academy research area. Related projects have been consolidated under `projects/` so the methods, implementations, experiments, and case studies can be maintained and explored from one place.
+
+### Included projects
+
+- [`chance-constrained-inventory-optimization-python`](projects/chance-constrained-inventory-optimization-python/)
+- [`conformal-prediction-robust-inventory-optimization-python`](projects/conformal-prediction-robust-inventory-optimization-python/)
+- [`contextual-optimization-newsvendor`](projects/contextual-optimization-newsvendor/)
+- [`demand-forecasting-plus-inventory-control`](projects/demand-forecasting-plus-inventory-control/)
+- [`hyperopt-inventory-policy-optimization`](projects/hyperopt-inventory-policy-optimization/)
+- [`robust-healthcare-inventory-optimization`](projects/robust-healthcare-inventory-optimization/)
+- [`seasonal-inventory-planning-python`](projects/seasonal-inventory-planning-python/)
+- [`wasserstein-dro-inventory-optimization-python`](projects/wasserstein-dro-inventory-optimization-python/)
+
+Each consolidated project keeps its own files and a `SOURCE_REPOSITORY.md` provenance record. The snapshot preserves the source repository's default-branch files at consolidation time; repository-level history and metadata remain separate from the snapshot.
+<!-- portfolio-umbrella:end -->
 
 A Python reference implementation for serial multi-echelon inventory planning, capacity-constrained material flow, stochastic simulation, simulation optimization, and Monte Carlo analysis.
 
